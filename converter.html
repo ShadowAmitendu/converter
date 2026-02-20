@@ -1,0 +1,1441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FileForgery — Convert & Compress</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<style>
+  :root {
+    --bg: #0b0c0f;
+    --surface: #13151a;
+    --surface2: #1c1f27;
+    --border: #2a2d38;
+    --accent: #f0c040;
+    --accent2: #e05a2b;
+    --text: #e8e9ec;
+    --muted: #9ba3b8;       /* boosted from #6b7080 */
+    --muted2: #7a8298;      /* secondary muted, still readable */
+    --success: #3ecf8e;
+    --danger: #f05050;
+    --font-head: 'Syne', sans-serif;
+    --font-mono: 'Space Mono', monospace;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-mono);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Grain overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 9999;
+    opacity: 0.4;
+  }
+
+  /* Diagonal accent line */
+  body::after {
+    content: '';
+    position: fixed;
+    top: -100px;
+    right: -100px;
+    width: 600px;
+    height: 600px;
+    background: radial-gradient(circle at center, rgba(240,192,64,0.06) 0%, transparent 70%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* ── Header ── */
+  header {
+    padding: 20px 24px 16px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    border-bottom: 1px solid var(--border);
+    position: relative;
+    z-index: 1;
+    flex-wrap: wrap;
+  }
+
+  .logo-mark {
+    width: 38px; height: 38px;
+    background: var(--accent);
+    clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--font-head);
+    font-weight: 800;
+    color: #000;
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+
+  h1 {
+    font-family: var(--font-head);
+    font-weight: 800;
+    font-size: 22px;
+    letter-spacing: -0.5px;
+    color: var(--text);
+  }
+  h1 span { color: var(--accent); }
+
+  .tagline {
+    margin-left: auto;
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+  }
+
+  /* ── Layout ── */
+  .app {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 24px 16px;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* ── Mode tabs ── */
+  .tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 24px;
+    background: var(--surface);
+    padding: 4px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+  }
+
+  .tab {
+    flex: 1;
+    padding: 12px 16px;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.18s;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 44px; /* touch target */
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active {
+    background: var(--accent);
+    color: #000;
+    font-weight: 700;
+  }
+
+  /* ── Panels ── */
+  .panel { display: none; animation: fadeIn 0.25s ease; }
+  .panel.active { display: block; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
+
+  /* ── Conversion grid ── */
+  .conv-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 8px;
+    margin-bottom: 20px;
+  }
+
+  .conv-btn {
+    padding: 12px 8px;
+    background: var(--surface);
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.18s;
+    text-align: center;
+    line-height: 1.5;
+    letter-spacing: 0.3px;
+    min-height: 44px; /* touch target */
+  }
+  .conv-btn:hover { border-color: var(--accent); color: var(--accent); transform: translateY(-1px); }
+  .conv-btn.selected {
+    background: rgba(240,192,64,0.12);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .conv-btn .arrow { display: block; margin-bottom: 6px; }
+
+  /* ── Drop zone ── */
+  .dropzone {
+    border: 2px dashed var(--border);
+    border-radius: 12px;
+    padding: 36px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: var(--surface);
+    margin-bottom: 16px;
+    position: relative;
+  }
+  .dropzone:hover, .dropzone.dragover {
+    border-color: var(--accent);
+    background: rgba(240,192,64,0.04);
+  }
+  .dropzone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+  .dropzone .drop-icon { font-size: 40px; margin-bottom: 12px; }
+  .dropzone h3 { font-family: var(--font-head); font-size: 17px; margin-bottom: 6px; }
+  .dropzone p { font-size: 11px; color: var(--muted); }
+
+  /* ── File list ── */
+  .file-list { margin-bottom: 16px; }
+  .file-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 8px;
+    animation: slideIn 0.2s ease;
+    transition: border-color 0.2s;
+  }
+  @keyframes slideIn { from { opacity:0; transform:translateX(-10px); } to { opacity:1; transform:translateX(0); } }
+  .file-item.done { border-color: var(--success); }
+  .file-item.error { border-color: var(--danger); }
+  .file-icon { font-size: 22px; flex-shrink: 0; }
+  .file-name { flex: 1; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+  .file-size { font-size: 11px; color: var(--muted); flex-shrink: 0; }
+  .file-status { font-size: 11px; flex-shrink: 0; }
+  .file-remove {
+    background: none; border: none; color: var(--muted2);
+    cursor: pointer; font-size: 16px; padding: 4px 6px;
+    border-radius: 4px; transition: all 0.15s; flex-shrink: 0;
+    min-width: 32px; min-height: 32px; display: flex; align-items: center; justify-content: center;
+  }
+  .file-remove:hover { color: var(--danger); background: rgba(240,80,80,0.1); }
+
+  .file-progress {
+    height: 2px;
+    background: var(--border);
+    border-radius: 2px;
+    margin-top: 6px;
+    overflow: hidden;
+  }
+  .file-progress-bar {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 2px;
+    width: 0%;
+    transition: width 0.3s ease;
+  }
+
+  /* ── Controls row ── */
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+  }
+
+  .control-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  .control-group label { color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; }
+
+  select, input[type=range], input[type=number] {
+    background: transparent;
+    border: none;
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    outline: none;
+    cursor: pointer;
+  }
+  select option { background: var(--surface2); }
+
+  input[type=range] { width: 90px; accent-color: var(--accent); }
+  input[type=number] {
+    width: 70px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 4px 8px;
+  }
+
+  /* ── Compress specific ── */
+  .compress-options {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    margin-bottom: 20px;
+  }
+
+  .compress-options h3 { font-family: var(--font-head); font-size: 15px; margin-bottom: 16px; color: var(--text); }
+
+  .option-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+  }
+  .option-label {
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 700;
+    width: 110px;
+    flex-shrink: 0;
+  }
+
+  .radio-group { display: flex; gap: 6px; flex-wrap: wrap; }
+  .radio-pill {
+    padding: 7px 14px;
+    background: var(--surface2);
+    border: 1.5px solid var(--border);
+    border-radius: 20px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.15s;
+    color: var(--muted);
+    user-select: none;
+    min-height: 36px;
+    display: flex;
+    align-items: center;
+  }
+  .radio-pill:hover { border-color: var(--accent); color: var(--text); }
+  .radio-pill.active {
+    background: rgba(240,192,64,0.15);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .target-size-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 14px;
+  }
+
+  .size-unit {
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+
+  /* ── Action buttons ── */
+  .btn-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .btn-primary {
+    padding: 13px 28px;
+    background: var(--accent);
+    color: #000;
+    border: none;
+    border-radius: 8px;
+    font-family: var(--font-head);
+    font-weight: 800;
+    font-size: 14px;
+    cursor: pointer;
+    letter-spacing: 0.5px;
+    transition: all 0.18s;
+    position: relative;
+    overflow: hidden;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 46px;
+  }
+  .btn-primary::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: rgba(255,255,255,0.15);
+    transform: translateX(-100%);
+    transition: transform 0.3s;
+  }
+  .btn-primary:hover::before { transform: translateX(0); }
+  .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 8px 24px rgba(240,192,64,0.3); }
+  .btn-primary:active { transform: translateY(0); }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+  .btn-secondary {
+    padding: 12px 18px;
+    background: transparent;
+    color: var(--text);
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.18s;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 46px;
+  }
+  .btn-secondary:hover { border-color: var(--text); }
+
+  .btn-download-all {
+    padding: 12px 18px;
+    background: rgba(62,207,142,0.12);
+    color: var(--success);
+    border: 1.5px solid var(--success);
+    border-radius: 8px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.18s;
+    display: none;
+    min-height: 46px;
+  }
+  .btn-download-all:hover { background: rgba(62,207,142,0.2); }
+  .btn-download-all.show { display: inline-flex; align-items: center; gap: 6px; }
+
+  /* ── Results ── */
+  .results-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 10px;
+    margin-top: 16px;
+  }
+
+  .result-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    transition: border-color 0.2s;
+    animation: popIn 0.25s ease;
+  }
+  @keyframes popIn { from { opacity:0; transform:scale(0.95); } to { opacity:1; transform:scale(1); } }
+  .result-card:hover { border-color: var(--accent); }
+
+  .result-thumb {
+    width: 100%;
+    height: 130px;
+    object-fit: cover;
+    display: block;
+    background: var(--surface2);
+  }
+
+  .result-info {
+    padding: 10px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .result-name { font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .result-dl {
+    background: var(--accent);
+    color: #000;
+    border: none;
+    padding: 5px 10px;
+    border-radius: 5px;
+    font-size: 10px;
+    font-weight: 700;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: opacity 0.15s;
+  }
+  .result-dl:hover { opacity: 0.85; }
+
+  /* ── Stats bar ── */
+  .stats-bar {
+    display: flex;
+    gap: 24px;
+    padding: 14px 20px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-top: 16px;
+    flex-wrap: wrap;
+  }
+  .stat { font-size: 11px; color: var(--muted); }
+  .stat strong { color: var(--accent); font-size: 15px; display: block; margin-bottom: 2px; }
+
+  /* ── Toast ── */
+  .toast-container {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 10000;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .toast {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-size: 12px;
+    animation: toastIn 0.25s ease;
+    max-width: 280px;
+  }
+  .toast.error { border-left-color: var(--danger); }
+  .toast.success { border-left-color: var(--success); }
+  @keyframes toastIn { from { opacity:0; transform:translateX(20px); } to { opacity:1; transform:translateX(0); } }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  .section-title {
+    font-family: var(--font-head);
+    font-size: 12px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    margin-bottom: 12px;
+    font-weight: 700;
+  }
+
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    background: rgba(240,192,64,0.15);
+    color: var(--accent);
+    border-radius: 10px;
+    font-size: 10px;
+    margin-left: 8px;
+  }
+
+  .material-icons-round { font-size: 20px; vertical-align: middle; }
+  .conv-btn .material-icons-round { font-size: 22px; display: block; margin-bottom: 4px; }
+  .dropzone .material-icons-round { font-size: 44px; margin-bottom: 12px; color: var(--muted); }
+  .file-icon .material-icons-round { font-size: 22px; }
+  .btn-primary .material-icons-round, .btn-secondary .material-icons-round, .btn-download-all .material-icons-round { font-size: 16px; }
+
+  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+  .empty-state {
+    text-align: center;
+    padding: 40px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  /* ── MOBILE RESPONSIVE ─────────────────────────────────── */
+  @media (max-width: 600px) {
+    header {
+      padding: 14px 16px 12px;
+      gap: 10px;
+    }
+    .tagline { display: none; }
+    h1 { font-size: 19px; }
+
+    .app { padding: 16px 12px; }
+
+    .tabs { margin-bottom: 16px; }
+    .tab { font-size: 11px; padding: 10px 8px; letter-spacing: 0; }
+
+    .conv-grid {
+      grid-template-columns: repeat(2, 1fr);
+      gap: 7px;
+    }
+    .conv-btn { font-size: 10px; padding: 10px 6px; }
+    .conv-btn .material-icons-round { font-size: 18px; }
+
+    .controls { gap: 6px; }
+    .control-group { padding: 7px 10px; font-size: 10px; }
+    input[type=range] { width: 70px; }
+
+    .dropzone { padding: 28px 16px; }
+    .dropzone h3 { font-size: 15px; }
+    .dropzone .material-icons-round { font-size: 36px; }
+
+    .file-item { padding: 9px 12px; gap: 8px; }
+    .file-size { display: none; }
+    .file-name { font-size: 11px; }
+
+    .btn-row { gap: 8px; }
+    .btn-primary { padding: 12px 20px; font-size: 13px; }
+    .btn-secondary { padding: 11px 14px; font-size: 11px; }
+    .btn-download-all { padding: 11px 14px; font-size: 11px; }
+
+    .compress-options { padding: 16px; }
+    .option-label { width: 90px; font-size: 10px; }
+    .radio-pill { padding: 6px 10px; font-size: 10px; }
+
+    .results-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    .result-thumb { height: 100px; }
+
+    .stats-bar { padding: 12px 14px; gap: 16px; }
+
+    .toast-container { bottom: 16px; right: 12px; left: 12px; }
+    .toast { max-width: 100%; font-size: 11px; }
+  }
+
+  @media (max-width: 380px) {
+    .conv-grid { grid-template-columns: repeat(2, 1fr); }
+    .btn-row { flex-direction: column; align-items: stretch; }
+    .btn-primary, .btn-secondary, .btn-download-all.show {
+      width: 100%; justify-content: center;
+    }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo-mark">FF</div>
+  <h1>File<span>Forgery</span></h1>
+  <span class="tagline">Convert &amp; Compress — No upload. Runs in browser.</span>
+</header>
+
+<div class="app">
+
+  <!-- Mode Tabs -->
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('convert')"><span class="material-icons-round" style="font-size:15px;vertical-align:-3px">swap_horiz</span> Convert</button>
+    <button class="tab" onclick="switchTab('compress')"><span class="material-icons-round" style="font-size:15px;vertical-align:-3px">compress</span> Compress</button>
+  </div>
+
+  <!-- ══ CONVERT PANEL ══ -->
+  <div class="panel active" id="panel-convert">
+
+    <div class="section-title">Choose Conversion</div>
+    <div class="conv-grid">
+      <button class="conv-btn selected" data-conv="pdf-png" onclick="selectConv(this)">
+        <span class="arrow"><span class="material-icons-round">picture_as_pdf</span></span>PDF → PNG
+      </button>
+      <button class="conv-btn" data-conv="pdf-jpg" onclick="selectConv(this)">
+        <span class="arrow"><span class="material-icons-round">picture_as_pdf</span></span>PDF → JPG
+      </button>
+      <button class="conv-btn" data-conv="pdf-webp" onclick="selectConv(this)">
+        <span class="arrow"><span class="material-icons-round">picture_as_pdf</span></span>PDF → WEBP
+      </button>
+      <button class="conv-btn" data-conv="png-pdf" onclick="selectConv(this)">
+        <span class="arrow"><span class="material-icons-round">image</span></span>PNG → PDF
+      </button>
+      <button class="conv-btn" data-conv="jpg-pdf" onclick="selectConv(this)">
+        <span class="arrow"><span class="material-icons-round">photo_camera</span></span>JPG → PDF
+      </button>
+      <button class="conv-btn" data-conv="webp-pdf" onclick="selectConv(this)">
+        <span class="arrow"><span class="material-icons-round">web</span></span>WEBP → PDF
+      </button>
+      <button class="conv-btn" data-conv="png-jpg" onclick="selectConv(this)">
+        <span class="arrow"><span class="material-icons-round">image</span></span>PNG → JPG
+      </button>
+      <button class="conv-btn" data-conv="jpg-png" onclick="selectConv(this)">
+        <span class="arrow"><span class="material-icons-round">photo_camera</span></span>JPG → PNG
+      </button>
+      <button class="conv-btn" data-conv="img-webp" onclick="selectConv(this)">
+        <span class="arrow"><span class="material-icons-round">perm_media</span></span>Any → WEBP
+      </button>
+      <button class="conv-btn" data-conv="img-gif" onclick="selectConv(this)">
+        <span class="arrow"><span class="material-icons-round">gif_box</span></span>Images → GIF
+      </button>
+      <button class="conv-btn" data-conv="img-bmp" onclick="selectConv(this)">
+        <span class="arrow"><span class="material-icons-round">photo</span></span>Any → BMP
+      </button>
+      <button class="conv-btn" data-conv="img-tiff" onclick="selectConv(this)">
+        <span class="arrow"><span class="material-icons-round">raw_on</span></span>Any → TIFF
+      </button>
+    </div>
+
+    <!-- Quality control (for image outputs) -->
+    <div class="controls" id="quality-controls">
+      <div class="control-group" id="dpi-control">
+        <label>DPI</label>
+        <select id="dpi-select">
+          <option value="1">72 — Screen</option>
+          <option value="1.5">108 — Good</option>
+          <option value="2" selected>150 — High</option>
+          <option value="3">216 — Print</option>
+          <option value="4">288 — Ultra</option>
+        </select>
+      </div>
+      <div class="control-group" id="quality-control">
+        <label>Quality</label>
+        <input type="range" id="quality-range" min="0.3" max="1" step="0.05" value="0.92"
+          oninput="document.getElementById('quality-val').textContent = Math.round(this.value*100)+'%'">
+        <span id="quality-val">92%</span>
+      </div>
+      <div class="control-group" id="pages-control">
+        <label>Pages</label>
+        <select id="pages-select">
+          <option value="all">All pages</option>
+          <option value="first">First page only</option>
+          <option value="custom">Custom range</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Drop zone -->
+    <div class="dropzone" id="conv-dropzone" ondragover="handleDragOver(event,'conv')" ondrop="handleDrop(event,'conv')" ondragleave="handleDragLeave(event,'conv')">
+      <input type="file" id="conv-input" multiple onchange="handleFiles(this.files,'conv')">
+      <div class="drop-icon"><span class="material-icons-round">upload_file</span></div>
+      <h3>Drop files here</h3>
+      <p id="conv-accept-hint">Accepts: PDF files</p>
+    </div>
+
+    <!-- File list -->
+    <div class="file-list" id="conv-file-list"></div>
+
+    <!-- Action buttons -->
+    <div class="btn-row">
+      <button class="btn-primary" id="conv-btn" onclick="startConvert()"><span class="material-icons-round">bolt</span> Convert All</button>
+      <button class="btn-secondary" onclick="clearFiles('conv')"><span class="material-icons-round">clear_all</span> Clear</button>
+      <button class="btn-download-all" id="conv-download-all"><span class="material-icons-round">download</span> Download All</button>
+    </div>
+
+    <!-- Results -->
+    <div id="conv-results-grid" class="results-grid"></div>
+    <div id="conv-stats" class="stats-bar" style="display:none">
+      <div class="stat"><strong id="s-converted">0</strong>Converted</div>
+      <div class="stat"><strong id="s-pages">0</strong>Total Pages</div>
+      <div class="stat"><strong id="s-time">0s</strong>Time</div>
+    </div>
+  </div>
+
+  <!-- ══ COMPRESS PANEL ══ -->
+  <div class="panel" id="panel-compress">
+
+    <div class="compress-options">
+      <h3>Compression Settings</h3>
+
+      <div class="option-row">
+        <span class="option-label">File type</span>
+        <div class="radio-group" id="comp-type-group">
+          <span class="radio-pill active" onclick="setCompType(this,'image')">Images</span>
+          <span class="radio-pill" onclick="setCompType(this,'pdf')">PDF</span>
+        </div>
+      </div>
+
+      <div class="option-row">
+        <span class="option-label">Mode</span>
+        <div class="radio-group" id="comp-mode-group">
+          <span class="radio-pill active" onclick="setCompMode(this,'quality')">By Quality</span>
+          <span class="radio-pill" onclick="setCompMode(this,'size')">Target Size</span>
+        </div>
+      </div>
+
+      <!-- By quality -->
+      <div id="quality-mode-options" class="option-row">
+        <span class="option-label">Quality</span>
+        <input type="range" id="comp-quality" min="0.1" max="1" step="0.05" value="0.7"
+          oninput="document.getElementById('comp-q-val').textContent = Math.round(this.value*100)+'%'"
+          style="width:180px; accent-color: var(--accent);">
+        <span id="comp-q-val" style="font-size:13px; color: var(--accent);">70%</span>
+
+        <div class="radio-group" style="margin-left:16px;" id="preset-group">
+          <span class="radio-pill" onclick="setQualityPreset(this, 0.9)">High</span>
+          <span class="radio-pill active" onclick="setQualityPreset(this, 0.7)">Medium</span>
+          <span class="radio-pill" onclick="setQualityPreset(this, 0.4)">Low</span>
+          <span class="radio-pill" onclick="setQualityPreset(this, 0.2)">Tiny</span>
+        </div>
+      </div>
+
+      <!-- Target size -->
+      <div id="size-mode-options" class="option-row" style="display:none">
+        <span class="option-label">Target Size</span>
+        <div class="target-size-row">
+          <input type="number" id="target-size" value="500" min="1" max="99999" style="width:80px; font-family: var(--font-mono); font-size:13px;">
+          <div class="radio-group" id="size-unit-group">
+            <span class="radio-pill active" onclick="setSizeUnit(this,'KB')">KB</span>
+            <span class="radio-pill" onclick="setSizeUnit(this,'MB')">MB</span>
+          </div>
+        </div>
+        <span style="font-size:11px; color:var(--muted); margin-left:10px;">Per file maximum</span>
+      </div>
+
+      <div class="option-row">
+        <span class="option-label">Output format</span>
+        <select id="comp-format" style="background:var(--surface2); border:1px solid var(--border); border-radius:6px; padding:6px 12px; color:var(--text); font-family:var(--font-mono); font-size:12px;">
+          <option value="same">Keep original format</option>
+          <option value="jpg">Convert to JPG (smaller)</option>
+          <option value="webp">Convert to WEBP (best compression)</option>
+          <option value="png">Convert to PNG</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Drop zone -->
+    <div class="dropzone" id="comp-dropzone" ondragover="handleDragOver(event,'comp')" ondrop="handleDrop(event,'comp')" ondragleave="handleDragLeave(event,'comp')">
+      <input type="file" id="comp-input" multiple onchange="handleFiles(this.files,'comp')">
+      <div class="drop-icon"><span class="material-icons-round">folder_zip</span></div>
+      <h3>Drop images or PDFs</h3>
+      <p>PNG, JPG, WEBP, BMP, GIF, PDF — batch supported</p>
+    </div>
+
+    <div class="file-list" id="comp-file-list"></div>
+
+    <div class="btn-row">
+      <button class="btn-primary" id="comp-btn" onclick="startCompress()"><span class="material-icons-round">bolt</span> Compress All</button>
+      <button class="btn-secondary" onclick="clearFiles('comp')"><span class="material-icons-round">clear_all</span> Clear</button>
+      <button class="btn-download-all" id="comp-download-all"><span class="material-icons-round">download</span> Download All</button>
+    </div>
+
+    <div id="comp-results-grid" class="results-grid"></div>
+    <div id="comp-stats" class="stats-bar" style="display:none">
+      <div class="stat"><strong id="cs-files">0</strong>Files</div>
+      <div class="stat"><strong id="cs-before">0</strong>Before</div>
+      <div class="stat"><strong id="cs-after">0</strong>After</div>
+      <div class="stat"><strong id="cs-saved">0%</strong>Saved</div>
+    </div>
+  </div>
+
+</div>
+
+<div class="toast-container" id="toasts"></div>
+
+<script>
+// ─────────────────────────────────────────────────────────────────────────────
+// Setup PDF.js worker
+// ─────────────────────────────────────────────────────────────────────────────
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// State
+// ─────────────────────────────────────────────────────────────────────────────
+let currentConv = 'pdf-png';
+let convFiles = [];
+let compFiles = [];
+let convResults = [];
+let compResults = [];
+let compType = 'image';
+let compMode = 'quality';
+let sizeUnit = 'KB';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tab switching
+// ─────────────────────────────────────────────────────────────────────────────
+function switchTab(tab) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  event.target.classList.add('active');
+  document.getElementById('panel-' + tab).classList.add('active');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Conversion type selection
+// ─────────────────────────────────────────────────────────────────────────────
+function selectConv(btn) {
+  document.querySelectorAll('.conv-btn').forEach(b => b.classList.remove('selected'));
+  btn.classList.add('selected');
+  currentConv = btn.dataset.conv;
+  clearFiles('conv');
+  updateConvHint();
+}
+
+function updateConvHint() {
+  const hint = document.getElementById('conv-accept-hint');
+  const dpiCtrl = document.getElementById('dpi-control');
+  const qualCtrl = document.getElementById('quality-control');
+  const pagesCtrl = document.getElementById('pages-control');
+
+  if (currentConv.startsWith('pdf-')) {
+    hint.textContent = 'Accepts: PDF files';
+    document.getElementById('conv-input').accept = '.pdf';
+    dpiCtrl.style.display = '';
+    pagesCtrl.style.display = '';
+  } else {
+    hint.textContent = 'Accepts: PNG, JPG, WEBP, BMP, GIF and other image files';
+    document.getElementById('conv-input').accept = 'image/*';
+    dpiCtrl.style.display = 'none';
+    pagesCtrl.style.display = 'none';
+  }
+  qualCtrl.style.display = currentConv.endsWith('-pdf') ? 'none' : '';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Drag & drop handlers
+// ─────────────────────────────────────────────────────────────────────────────
+function handleDragOver(e, ctx) {
+  e.preventDefault();
+  document.getElementById(ctx + '-dropzone').classList.add('dragover');
+}
+function handleDragLeave(e, ctx) {
+  document.getElementById(ctx + '-dropzone').classList.remove('dragover');
+}
+function handleDrop(e, ctx) {
+  e.preventDefault();
+  document.getElementById(ctx + '-dropzone').classList.remove('dragover');
+  handleFiles(e.dataTransfer.files, ctx);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// File management
+// ─────────────────────────────────────────────────────────────────────────────
+function handleFiles(files, ctx) {
+  const list = ctx === 'conv' ? convFiles : compFiles;
+  Array.from(files).forEach(f => {
+    if (!list.find(x => x.file.name === f.name && x.file.size === f.size)) {
+      list.push({ file: f, id: Math.random().toString(36).slice(2), status: 'pending' });
+    }
+  });
+  renderFileList(ctx);
+}
+
+function renderFileList(ctx) {
+  const list = ctx === 'conv' ? convFiles : compFiles;
+  const container = document.getElementById(ctx + '-file-list');
+  container.innerHTML = '';
+  list.forEach((item, i) => {
+    const ext = item.file.name.split('.').pop().toUpperCase();
+    const icon = getIcon(ext);
+    const size = formatSize(item.file.size);
+    const statusColor = item.status === 'done' ? 'var(--success)' :
+                        item.status === 'error' ? 'var(--danger)' : 'var(--muted)';
+    const statusText = item.status === 'done' ? '<span class="material-icons-round" style="font-size:14px">check_circle</span>' :
+                       item.status === 'error' ? '<span class="material-icons-round" style="font-size:14px">error</span>' :
+                       item.status === 'processing' ? '<span class="material-icons-round" style="font-size:14px;animation:spin 1s linear infinite">sync</span>' : '—';
+
+    const div = document.createElement('div');
+    div.className = 'file-item' + (item.status === 'done' ? ' done' : item.status === 'error' ? ' error' : '');
+    div.id = 'fi-' + item.id;
+    div.innerHTML = `
+      <span class="file-icon">${icon}</span>
+      <div style="flex:1;overflow:hidden">
+        <div class="file-name">${item.file.name}</div>
+        <div class="file-progress"><div class="file-progress-bar" id="pb-${item.id}"></div></div>
+      </div>
+      <span class="file-size">${size}</span>
+      <span class="file-status" style="color:${statusColor}">${statusText}</span>
+      <button class="file-remove" onclick="removeFile('${ctx}','${item.id}')"><span class="material-icons-round" style="font-size:16px;vertical-align:-3px">close</span></button>
+    `;
+    container.appendChild(div);
+  });
+}
+
+function removeFile(ctx, id) {
+  if (ctx === 'conv') convFiles = convFiles.filter(f => f.id !== id);
+  else compFiles = compFiles.filter(f => f.id !== id);
+  renderFileList(ctx);
+}
+
+function clearFiles(ctx) {
+  if (ctx === 'conv') { convFiles = []; convResults = []; document.getElementById('conv-results-grid').innerHTML = ''; document.getElementById('conv-stats').style.display='none'; document.getElementById('conv-download-all').classList.remove('show'); }
+  else { compFiles = []; compResults = []; document.getElementById('comp-results-grid').innerHTML = ''; document.getElementById('comp-stats').style.display='none'; document.getElementById('comp-download-all').classList.remove('show'); }
+  renderFileList(ctx);
+}
+
+function getIcon(ext) {
+  const map = {
+    PDF: 'picture_as_pdf', PNG: 'image', JPG: 'photo_camera', JPEG: 'photo_camera',
+    WEBP: 'web', GIF: 'gif_box', BMP: 'photo', TIFF: 'raw_on', TIF: 'raw_on', SVG: 'palette'
+  };
+  const iconName = map[ext] || 'insert_drive_file';
+  return `<span class="material-icons-round" style="font-size:22px;color:var(--muted)">${iconName}</span>`;
+}
+
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
+  return (bytes/1024/1024).toFixed(2) + ' MB';
+}
+
+function setProgress(id, pct) {
+  const bar = document.getElementById('pb-' + id);
+  if (bar) bar.style.width = pct + '%';
+}
+
+function setFileStatus(ctx, id, status) {
+  const item = (ctx === 'conv' ? convFiles : compFiles).find(f => f.id === id);
+  if (item) item.status = status;
+  const el = document.getElementById('fi-' + id);
+  if (!el) return;
+  el.classList.remove('done', 'error');
+  if (status === 'done') el.classList.add('done');
+  if (status === 'error') el.classList.add('error');
+  const statusEl = el.querySelector('.file-status');
+  if (statusEl) {
+    statusEl.innerHTML = status === 'done' ? '<span class="material-icons-round" style="font-size:14px">check_circle</span>' :
+                         status === 'error' ? '<span class="material-icons-round" style="font-size:14px">error</span>' :
+                         status === 'processing' ? '<span class="material-icons-round" style="font-size:14px;animation:spin 1s linear infinite">sync</span>' : '—';
+    statusEl.style.color = status === 'done' ? 'var(--success)' : status === 'error' ? 'var(--danger)' : 'var(--muted)';
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Compress UI helpers
+// ─────────────────────────────────────────────────────────────────────────────
+function setCompType(el, val) {
+  compType = val;
+  document.querySelectorAll('#comp-type-group .radio-pill').forEach(p => p.classList.remove('active'));
+  el.classList.add('active');
+}
+function setCompMode(el, val) {
+  compMode = val;
+  document.querySelectorAll('#comp-mode-group .radio-pill').forEach(p => p.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('quality-mode-options').style.display = val === 'quality' ? '' : 'none';
+  document.getElementById('size-mode-options').style.display = val === 'size' ? '' : 'none';
+}
+function setSizeUnit(el, val) {
+  sizeUnit = val;
+  document.querySelectorAll('#size-unit-group .radio-pill').forEach(p => p.classList.remove('active'));
+  el.classList.add('active');
+}
+function setQualityPreset(el, val) {
+  document.querySelectorAll('#preset-group .radio-pill').forEach(p => p.classList.remove('active'));
+  el.classList.add('active');
+  const slider = document.getElementById('comp-quality');
+  slider.value = val;
+  document.getElementById('comp-q-val').textContent = Math.round(val * 100) + '%';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Toast
+// ─────────────────────────────────────────────────────────────────────────────
+function toast(msg, type = '') {
+  const t = document.createElement('div');
+  t.className = 'toast ' + type;
+  t.textContent = msg;
+  document.getElementById('toasts').appendChild(t);
+  setTimeout(() => t.remove(), 4000);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PDF → Image
+// ─────────────────────────────────────────────────────────────────────────────
+async function pdfToImages(file, fmt, scale, quality, pagesMode) {
+  const ab = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: ab }).promise;
+  const numPages = pdf.numPages;
+  const results = [];
+
+  let pageList = [];
+  if (pagesMode === 'first') {
+    pageList = [1];
+  } else {
+    pageList = Array.from({ length: numPages }, (_, i) => i + 1);
+  }
+
+  for (const pageNum of pageList) {
+    const page = await pdf.getPage(pageNum);
+    const viewport = page.getViewport({ scale });
+    const canvas = document.createElement('canvas');
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    await page.render({ canvasContext: ctx, viewport }).promise;
+
+    const mimeMap = { png: 'image/png', jpg: 'image/jpeg', webp: 'image/webp', gif: 'image/png', bmp: 'image/bmp', tiff: 'image/png' };
+    const mime = mimeMap[fmt] || 'image/png';
+    const dataUrl = canvas.toDataURL(mime, quality);
+    const stem = file.name.replace(/\.pdf$/i, '');
+    results.push({ name: `${stem}_p${pageNum}.${fmt}`, dataUrl, mime });
+  }
+  return results;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Images → PDF using pdf-lib
+// ─────────────────────────────────────────────────────────────────────────────
+async function imagesToPdf(files) {
+  const { PDFDocument } = PDFLib;
+  const pdfDoc = await PDFDocument.create();
+
+  for (const f of files) {
+    const ab = await f.arrayBuffer();
+    const uint8 = new Uint8Array(ab);
+    const ext = f.name.split('.').pop().toLowerCase();
+
+    // Draw on canvas first to handle any format
+    const img = await loadImageFromFile(f);
+    const canvas = document.createElement('canvas');
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    const jpgDataUrl = canvas.toDataURL('image/jpeg', 0.92);
+    const jpgBytes = dataUrlToBytes(jpgDataUrl);
+
+    const pdfImg = await pdfDoc.embedJpg(jpgBytes);
+    const page = pdfDoc.addPage([pdfImg.width, pdfImg.height]);
+    page.drawImage(pdfImg, { x: 0, y: 0, width: pdfImg.width, height: pdfImg.height });
+  }
+
+  const pdfBytes = await pdfDoc.save();
+  const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+  return URL.createObjectURL(blob);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Image → Image conversion
+// ─────────────────────────────────────────────────────────────────────────────
+async function convertImage(file, toFmt, quality) {
+  const img = await loadImageFromFile(file);
+  const canvas = document.createElement('canvas');
+  canvas.width = img.naturalWidth;
+  canvas.height = img.naturalHeight;
+  const ctx = canvas.getContext('2d');
+  // white bg for jpg
+  if (toFmt === 'jpg' || toFmt === 'bmp') { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height); }
+  ctx.drawImage(img, 0, 0);
+
+  const mimeMap = { png:'image/png', jpg:'image/jpeg', jpeg:'image/jpeg', webp:'image/webp', bmp:'image/bmp', tiff:'image/png', gif:'image/png' };
+  const mime = mimeMap[toFmt] || 'image/png';
+  return canvas.toDataURL(mime, quality);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Images → GIF (simple frame GIF using canvas)
+// ─────────────────────────────────────────────────────────────────────────────
+async function imagesToGif(files) {
+  // For GIF we create an animated GIF-like experience by packaging frames
+  // Since browser doesn't natively encode GIF, we'll create a data URI for first frame
+  // and note the limitation
+  toast('GIF: Exporting first frame as PNG (browser limitation for animated GIF)', '');
+  const f = files[0];
+  return await convertImage(f, 'png', 1.0);
+}
+
+function loadImageFromFile(file) {
+  return new Promise((res, rej) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); res(img); };
+    img.onerror = rej;
+    img.src = url;
+  });
+}
+
+function dataUrlToBytes(dataUrl) {
+  const base64 = dataUrl.split(',')[1];
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+function dataUrlToBlob(dataUrl) {
+  const [header, data] = dataUrl.split(',');
+  const mime = header.match(/:(.*?);/)[1];
+  const bytes = dataUrlToBytes(dataUrl);
+  return new Blob([bytes], { type: mime });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Start Convert
+// ─────────────────────────────────────────────────────────────────────────────
+async function startConvert() {
+  if (convFiles.length === 0) { toast('Add files first!', 'error'); return; }
+
+  const btn = document.getElementById('conv-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="material-icons-round">sync</span> Converting...';
+  convResults = [];
+  document.getElementById('conv-results-grid').innerHTML = '';
+  document.getElementById('conv-stats').style.display = 'none';
+
+  const scale = parseFloat(document.getElementById('dpi-select').value);
+  const quality = parseFloat(document.getElementById('quality-range').value);
+  const pagesMode = document.getElementById('pages-select').value;
+  const t0 = performance.now();
+  let totalPages = 0;
+
+  const [fromFmt, toFmt] = currentConv.split('-');
+
+  try {
+    if (currentConv === 'img-gif') {
+      // Multi-image to GIF
+      const files = convFiles.map(f => f.file);
+      const dataUrl = await imagesToGif(files);
+      const name = 'output.gif';
+      convResults.push({ name, dataUrl, type: 'image' });
+      addResultCard('conv', name, dataUrl);
+      convFiles.forEach(f => { setProgress(f.id, 100); setFileStatus('conv', f.id, 'done'); });
+    } else if (toFmt === 'pdf' || currentConv.endsWith('-pdf')) {
+      // All images → single PDF
+      const files = convFiles.map(f => f.file);
+      convFiles.forEach(f => { setProgress(f.id, 50); setFileStatus('conv', f.id, 'processing'); });
+      const blobUrl = await imagesToPdf(files);
+      const name = 'combined.pdf';
+      convResults.push({ name, blobUrl, type: 'pdf' });
+      addResultCard('conv', name, null, blobUrl, 'pdf');
+      convFiles.forEach(f => { setProgress(f.id, 100); setFileStatus('conv', f.id, 'done'); });
+    } else {
+      for (const item of convFiles) {
+        setFileStatus('conv', item.id, 'processing');
+        setProgress(item.id, 10);
+        try {
+          if (fromFmt === 'pdf') {
+            const pages = await pdfToImages(item.file, toFmt, scale, quality, pagesMode);
+            totalPages += pages.length;
+            let pct = 10;
+            for (const p of pages) {
+              convResults.push({ name: p.name, dataUrl: p.dataUrl, type: 'image' });
+              addResultCard('conv', p.name, p.dataUrl);
+              pct = Math.min(pct + (90 / pages.length), 100);
+              setProgress(item.id, pct);
+            }
+          } else {
+            const dataUrl = await convertImage(item.file, toFmt, quality);
+            const name = item.file.name.replace(/\.[^.]+$/, '') + '.' + toFmt;
+            convResults.push({ name, dataUrl, type: 'image' });
+            addResultCard('conv', name, dataUrl);
+            totalPages++;
+            setProgress(item.id, 100);
+          }
+          setFileStatus('conv', item.id, 'done');
+        } catch (e) {
+          setFileStatus('conv', item.id, 'error');
+          toast('Error: ' + item.file.name, 'error');
+        }
+      }
+    }
+
+    const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+    document.getElementById('s-converted').textContent = convResults.length;
+    document.getElementById('s-pages').textContent = totalPages || convResults.length;
+    document.getElementById('s-time').textContent = elapsed + 's';
+    document.getElementById('conv-stats').style.display = 'flex';
+    if (convResults.length > 0) document.getElementById('conv-download-all').classList.add('show');
+    toast(`✓ ${convResults.length} file(s) converted!`, 'success');
+  } catch (e) {
+    toast('Conversion failed: ' + e.message, 'error');
+    console.error(e);
+  }
+
+  btn.disabled = false;
+  btn.innerHTML = '<span class="material-icons-round">bolt</span> Convert All';
+}
+
+function addResultCard(ctx, name, dataUrl, blobUrl, type) {
+  const grid = document.getElementById(ctx + '-results-grid');
+  const card = document.createElement('div');
+  card.className = 'result-card';
+
+  const isPdf = type === 'pdf' || name.endsWith('.pdf');
+  const thumbSrc = isPdf ? null : dataUrl;
+
+  card.innerHTML = `
+    ${thumbSrc ? `<img class="result-thumb" src="${thumbSrc}" alt="${name}">` : `<div class="result-thumb" style="display:flex;align-items:center;justify-content:center;"><span class="material-icons-round" style="font-size:48px;color:var(--muted)">picture_as_pdf</span></div>`}
+    <div class="result-info">
+      <span class="result-name" title="${name}">${name}</span>
+      <button class="result-dl" onclick="downloadResult('${ctx}',${ctx==='conv' ? convResults.length-1 : compResults.length-1})"><span class="material-icons-round" style="font-size:14px;vertical-align:-2px">download</span></button>
+    </div>
+  `;
+  grid.appendChild(card);
+}
+
+function downloadResult(ctx, idx) {
+  const results = ctx === 'conv' ? convResults : compResults;
+  const r = results[idx];
+  if (!r) return;
+  const a = document.createElement('a');
+  a.download = r.name;
+  a.href = r.blobUrl || r.dataUrl;
+  a.click();
+}
+
+document.getElementById('conv-download-all').addEventListener('click', () => {
+  convResults.forEach((r, i) => {
+    setTimeout(() => {
+      const a = document.createElement('a');
+      a.download = r.name;
+      a.href = r.blobUrl || r.dataUrl;
+      a.click();
+    }, i * 300);
+  });
+});
+
+document.getElementById('comp-download-all').addEventListener('click', () => {
+  compResults.forEach((r, i) => {
+    setTimeout(() => {
+      const a = document.createElement('a');
+      a.download = r.name;
+      a.href = r.dataUrl;
+      a.click();
+    }, i * 300);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Start Compress
+// ─────────────────────────────────────────────────────────────────────────────
+async function startCompress() {
+  if (compFiles.length === 0) { toast('Add files first!', 'error'); return; }
+
+  const btn = document.getElementById('comp-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="material-icons-round">sync</span> Compressing...';
+  compResults = [];
+  document.getElementById('comp-results-grid').innerHTML = '';
+  document.getElementById('comp-stats').style.display = 'none';
+
+  let quality = parseFloat(document.getElementById('comp-quality').value);
+  const outFmt = document.getElementById('comp-format').value;
+  const targetSizeVal = parseFloat(document.getElementById('target-size').value);
+  const targetBytes = sizeUnit === 'MB' ? targetSizeVal * 1024 * 1024 : targetSizeVal * 1024;
+
+  let totalBefore = 0, totalAfter = 0;
+
+  for (const item of compFiles) {
+    setFileStatus('comp', item.id, 'processing');
+    setProgress(item.id, 10);
+    totalBefore += item.file.size;
+
+    try {
+      const ext = item.file.name.split('.').pop().toLowerCase();
+      const isPdf = ext === 'pdf';
+
+      if (isPdf) {
+        // PDF compression: re-render pages at lower quality
+        const result = await compressPdf(item.file, quality);
+        const name = item.file.name.replace(/\.pdf$/i, '_compressed.pdf');
+        const blob = new Blob([result], { type: 'application/pdf' });
+        totalAfter += blob.size;
+        const url = URL.createObjectURL(blob);
+        compResults.push({ name, dataUrl: url, originalSize: item.file.size, newSize: blob.size });
+        addCompResultCard(name, url, 'pdf', item.file.size, blob.size);
+      } else {
+        // Image compression
+        const img = await loadImageFromFile(item.file);
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0);
+
+        const targetFmt = outFmt === 'same' ? (ext === 'png' ? 'png' : 'jpg') : outFmt;
+        const mime = targetFmt === 'png' ? 'image/png' : targetFmt === 'webp' ? 'image/webp' : 'image/jpeg';
+
+        let finalQ = quality;
+        let dataUrl;
+
+        if (compMode === 'size') {
+          // Binary search for target size
+          let lo = 0.1, hi = 0.99;
+          for (let iter = 0; iter < 12; iter++) {
+            const mid = (lo + hi) / 2;
+            dataUrl = canvas.toDataURL(mime, mid);
+            const bytes = Math.round((dataUrl.length - dataUrl.indexOf(',') - 1) * 0.75);
+            if (bytes > targetBytes) hi = mid;
+            else { lo = mid; if (bytes >= targetBytes * 0.85) break; }
+          }
+          finalQ = lo;
+        }
+
+        dataUrl = canvas.toDataURL(mime, finalQ);
+        const approxSize = Math.round((dataUrl.length - dataUrl.indexOf(',') - 1) * 0.75);
+        totalAfter += approxSize;
+
+        const name = item.file.name.replace(/\.[^.]+$/, '') + '_compressed.' + targetFmt;
+        compResults.push({ name, dataUrl, originalSize: item.file.size, newSize: approxSize });
+        addCompResultCard(name, dataUrl, 'image', item.file.size, approxSize);
+      }
+
+      setProgress(item.id, 100);
+      setFileStatus('comp', item.id, 'done');
+    } catch (e) {
+      setFileStatus('comp', item.id, 'error');
+      toast('Error: ' + item.file.name, 'error');
+      console.error(e);
+    }
+  }
+
+  const saved = totalBefore > 0 ? Math.round((1 - totalAfter / totalBefore) * 100) : 0;
+  document.getElementById('cs-files').textContent = compResults.length;
+  document.getElementById('cs-before').textContent = formatSize(totalBefore);
+  document.getElementById('cs-after').textContent = formatSize(totalAfter);
+  document.getElementById('cs-saved').textContent = saved + '%';
+  document.getElementById('comp-stats').style.display = 'flex';
+  if (compResults.length > 0) document.getElementById('comp-download-all').classList.add('show');
+  toast(`✓ Compressed ${compResults.length} file(s)! Saved ${saved}%`, 'success');
+
+  btn.disabled = false;
+  btn.innerHTML = '<span class="material-icons-round">bolt</span> Compress All';
+}
+
+async function compressPdf(file, quality) {
+  const { PDFDocument } = PDFLib;
+  const ab = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: ab }).promise;
+  const newPdf = await PDFDocument.create();
+
+  const renderScale = Math.max(0.4, quality); // lower quality = lower scale
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const viewport = page.getViewport({ scale: renderScale * 1.5 });
+    const canvas = document.createElement('canvas');
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    const jpgDataUrl = canvas.toDataURL('image/jpeg', quality);
+    const jpgBytes = dataUrlToBytes(jpgDataUrl);
+    const jpgImg = await newPdf.embedJpg(jpgBytes);
+    const pdfPage = newPdf.addPage([jpgImg.width, jpgImg.height]);
+    pdfPage.drawImage(jpgImg, { x: 0, y: 0, width: jpgImg.width, height: jpgImg.height });
+  }
+  return await newPdf.save();
+}
+
+function addCompResultCard(name, dataUrl, type, origSize, newSize) {
+  const grid = document.getElementById('comp-results-grid');
+  const isPdf = type === 'pdf';
+  const saved = Math.round((1 - newSize / origSize) * 100);
+  const color = saved > 0 ? 'var(--success)' : 'var(--danger)';
+  const idx = compResults.length - 1;
+
+  const card = document.createElement('div');
+  card.className = 'result-card';
+  card.innerHTML = `
+    ${!isPdf ? `<img class="result-thumb" src="${dataUrl}" alt="${name}">` : `<div class="result-thumb" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;"><span class="material-icons-round" style="font-size:44px;color:var(--muted)">picture_as_pdf</span><span style="font-size:12px;color:var(--success)">−${saved}%</span></div>`}
+    <div class="result-info">
+      <div style="flex:1;overflow:hidden">
+        <div class="result-name" title="${name}">${name}</div>
+        <div style="font-size:10px;color:${color};margin-top:2px;">${formatSize(origSize)} → ${formatSize(newSize)} (${saved > 0 ? '-' : '+'}${Math.abs(saved)}%)</div>
+      </div>
+      <button class="result-dl" onclick="downloadResult('comp',${idx})"><span class="material-icons-round" style="font-size:14px;vertical-align:-2px">download</span></button>
+    </div>
+  `;
+  grid.appendChild(card);
+}
+
+// Init
+updateConvHint();
+</script>
+</body>
+</html>
